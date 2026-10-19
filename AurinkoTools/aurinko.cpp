@@ -7,46 +7,63 @@
 
 void PrintUsage() {
     std::cout << "\n";
-    std::cout << "Aurinko - 游戏项目脚手架\n";
+    std::cout << "Aurinko - game project scaffolding\n";
     std::cout << "\n";
-    std::cout << "用法:\n";
-    std::cout << "  aurinko create                  创建新项目（生成 characters/ 和 fonts/）\n";
-    std::cout << "  aurinko create <角色名>         创建新角色\n";
-    std::cout << "  aurinko addfont <路径> [名字]   导入字体到 fonts/ 目录\n";
-    std::cout << "  aurinko update [参数...]        生成并编译（可跟额外编译参数）\n";
-    std::cout << "  aurinko version                 显示版本号\n";
+    std::cout << "Usage:\n";
+    std::cout << "  aurinko create                  Create a new project (characters/ + fonts/)\n";
+    std::cout << "  aurinko create <name>           Create a new character\n";
+    std::cout << "  aurinko create-style <name>     Create an empty stylesheet\n";
+    std::cout << "  aurinko delete <name>           Delete a character (with confirmation)\n";
+    std::cout << "  aurinko list                    List all characters\n";
+    std::cout << "  aurinko addfont <path> [name]   Import a font into fonts/\n";
+    std::cout << "  aurinko update [args...]        Generate and compile (extra flags passed through)\n";
+    std::cout << "  aurinko version                 Show version\n";
     std::cout << "\n";
-    std::cout << "update 额外参数例子:\n";
-    std::cout << "  aurinko update -lcurl -lpthread   追加链接库\n";
-    std::cout << "  aurinko update -I./thirdparty     追加 include 路径\n";
-    std::cout << "  aurinko update -DDEBUG_MODE       追加宏定义\n";
-    std::cout << "  aurinko update -d                 切到 debug 编译（-g -O0，不去符号）\n";
+    std::cout << "Extra update flags (examples):\n";
+    std::cout << "  aurinko update -lcurl -lpthread   Add link libraries\n";
+    std::cout << "  aurinko update -I./thirdparty     Add include path\n";
+    std::cout << "  aurinko update -DDEBUG_MODE       Add macro definition\n";
+    std::cout << "  aurinko update -d                 Debug build (-g -O0, no strip)\n";
     std::cout << "\n";
-    std::cout << "也可以在项目根目录创建 build.txt，每行一条参数，update 时自动读取。\n";
+    std::cout << "You can also put one flag per line in build.txt (auto-read on update).\n";
     std::cout << "\n";
 }
 
 int main(int argc, char** argv) {
     if (argc < 2) {
         PrintUsage();
-        return 0;
+        return 1;
     }
 
     const std::string cmd = argv[1];
 
     if (cmd == "create") {
-        if (argc >= 3) CmdCreateCharacter(argv[2]);
-        else           CmdCreateProject();
+        if (argc >= 3) return CmdCreateCharacter(argv[2]);
+        else           return CmdCreateProject();
+    } else if (cmd == "create-style") {
+        if (argc < 3) {
+            std::cout << "Usage: aurinko create-style <name>\n";
+            return 1;
+        }
+        return CmdCreateStyle(argv[2]);
+    } else if (cmd == "delete" || cmd == "remove" || cmd == "rm") {
+        if (argc < 3) {
+            std::cout << "Usage: aurinko delete <name>\n";
+            return 1;
+        }
+        return CmdDeleteCharacter(argv[2]);
+    } else if (cmd == "list" || cmd == "ls") {
+        return CmdListCharacters();
     } else if (cmd == "addfont") {
         if (argc < 3) {
-            std::cout << "用法: aurinko addfont <路径> [名字]\n";
-            std::cout << "  <路径>  字体文件路径（支持拖拽文件到终端）\n";
-            std::cout << "  [名字]  可选，导入后重命名为这个名字（自动补扩展名）\n";
-            return 0;
+            std::cout << "Usage: aurinko addfont <path> [name]\n";
+            std::cout << "  <path>  font file path (drag-and-drop supported)\n";
+            std::cout << "  [name]  optional, rename on import (extension auto-added)\n";
+            return 1;
         }
         std::string inputPath = argv[2];
         std::string newName = (argc >= 4) ? argv[3] : "";
-        CmdAddFont(inputPath, newName);
+        return CmdAddFont(inputPath, newName);
     } else if (cmd == "update") {
         bool debugMode = false;
         std::vector<std::string> extraFlags;
@@ -60,12 +77,12 @@ int main(int argc, char** argv) {
         auto fileFlags = ReadBuildFlags();
         extraFlags.insert(extraFlags.end(), fileFlags.begin(), fileFlags.end());
 
-        CmdUpdate(debugMode, extraFlags);
+        return CmdUpdate(debugMode, extraFlags);
     } else if (cmd == "version" || cmd == "-v" || cmd == "--version") {
         std::cout << "aurinko " << AURINKO_VERSION << "\n";
+        return 0;
     } else {
         PrintUsage();
+        return 1;
     }
-
-    return 0;
 }

@@ -1,0 +1,1 @@
+g++ aurinko.cpp -o aurinko -std=c++20 -Wall -Wextra

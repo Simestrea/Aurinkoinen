@@ -11,10 +11,7 @@
 namespace fs = std::filesystem;
 
 // ==========================================
-// 参数类型 → 注入实参
-//   aur::Character&  -> 角色实例名（如 "Alice"）
-//   aur::Context&    -> aur::detail::context()
-// 返回 false 表示不支持，out 填类型名以便报错
+// Parameter type -> injected argument
 // ==========================================
 inline bool ClassifyParam(const std::string& type,
                           const std::string& charName,
@@ -32,8 +29,6 @@ inline bool ClassifyParam(const std::string& type,
     return false;
 }
 
-// 生成 "c == &Alice || c == &Bob || ..." 这段
-// chars 为空时生成 "(void)c" 保证语法完整
 inline void WriteCharacterFilter(std::ostream& out,
                                  const std::vector<CharacterConfig>& chars,
                                  const std::string& indent)
@@ -48,7 +43,6 @@ inline void WriteCharacterFilter(std::ostream& out,
     out << ") continue;\n";
 }
 
-// 生成 index.cpp 时统一使用 aur::detail::xxx
 inline bool GenerateIndexCpp(int width, int height,
                              const std::vector<CharacterConfig>& chars,
                              const std::vector<CharFunctions>& charFuncs,
@@ -64,22 +58,7 @@ inline bool GenerateIndexCpp(int width, int height,
     out << "// Edit characters/<name>/<name>.hpp instead.\n\n";
 
     out << "#include <raylib.h>\n";
-    out << "#include <aurinko/init.hpp>\n";
-    out << "#include <aurinko/ui_root.hpp>\n";
-    out << "#include <aurinko/character.hpp>\n";
-    out << "#include <aurinko/coroutine.hpp>\n";
-    out << "#include <aurinko/scene.hpp>\n";
-    out << "#include <aurinko/text.hpp>\n";
-    out << "#include <aurinko/context.hpp>\n";
-    out << "#include <aurinko/textbox.hpp>\n";
-    out << "#include <aurinko/button.hpp>\n";
-    out << "#include <aurinko/panel.hpp>\n";
-    out << "#include <aurinko/draw.hpp>\n";
-    out << "#include <aurinko/input.hpp>\n";
-    out << "#include <aurinko/progress_bar.hpp>\n";
-    out << "#include <aurinko/extras/slider.hpp>\n";
-    out << "#include <aurinko/extras/plot.hpp>\n";
-    out << "#include <aurinko/extras/table.hpp>\n";
+    out << "#include <aurinko/aurinko.hpp>\n";
     out << "#include \"globals.hpp\"\n\n";
 
     for (auto& c : chars) {
@@ -92,19 +71,29 @@ inline bool GenerateIndexCpp(int width, int height,
     out << "    const int vh = " << height << ";\n";
     out << "    aur::detail::virtualScreen.Init(vw, vh, \"Game\");\n\n";
 
+    // -- Construct characters: pick constructor based on HasTexture() --
     const int total = static_cast<int>(chars.size());
     for (int i = 0; i < total; i++) {
         auto& c = chars[i];
         const int slot = i + 1;
 
-        out << "    aur::Character " << c.name
-            << "(\"" << c.name << "\", "
-            << "\"characters/" << c.name << "/" << c.texture << "\", "
-            << "{ static_cast<float>(vw) * " << slot << " / " << (total + 1)
-            << ", static_cast<float>(vh) / 2 }, "
-            << FloatLit(c.scale) << "f, "
-            << c.frames << ", "
-            << FloatLit(c.frameSpeed) << "f);\n";
+        if (c.HasTexture()) {
+            out << "    aur::Character " << c.name
+                << "(\"" << c.name << "\", "
+                << "\"characters/" << c.name << "/" << c.texture << "\", "
+                << "{ static_cast<float>(vw) * " << slot << " / " << (total + 1)
+                << ", static_cast<float>(vh) / 2 }, "
+                << FloatLit(c.scale) << "f, "
+                << c.frames << ", "
+                << FloatLit(c.frameSpeed) << "f);\n";
+        } else {
+            // No texture: only name and position
+            out << "    aur::Character " << c.name
+                << "(\""
+                << c.name << "\", "
+                << "{ static_cast<float>(vw) * " << slot << " / " << (total + 1)
+                << ", static_cast<float>(vh) / 2 });\n";
+        }
     }
     out << "\n";
 
@@ -118,7 +107,7 @@ inline bool GenerateIndexCpp(int width, int height,
     }
     out << "\n";
 
-    // ---------- 启动角色脚本（按类型注入参数） ----------
+    // ---------- Start character scripts ----------
     for (auto& cf : charFuncs) {
         int scene = 0;
         for (auto& c : chars) {
@@ -126,7 +115,8 @@ inline bool GenerateIndexCpp(int width, int height,
         }
 
         for (auto& fn : cf.functions) {
-            if (fn.isClone) continue;
+            if (fn.isClone)  continue;
+            if (fn.isAction) continue;
 
             std::vector<std::string> args;
             bool ok = true;
@@ -143,11 +133,11 @@ inline bool GenerateIndexCpp(int width, int height,
             }
 
             if (!ok) {
-                out << "    // [aurinko] 跳过 " << cf.name << "::" << fn.name
-                    << "：不支持的参数类型 \"" << badType << "\"\n";
-                std::cout << "警告: " << cf.name << "::" << fn.name
-                          << " 参数类型 \"" << badType
-                          << "\" 不受支持，已跳过启动\n";
+                out << "    // [aurinko] skipped " << cf.name << "::" << fn.name
+                    << ": unsupported parameter type \"" << badType << "\"\n";
+                std::cout << "Warning: " << cf.name << "::" << fn.name
+                          << " parameter type \"" << badType
+                          << "\" is not supported, skipped\n";
                 continue;
             }
 

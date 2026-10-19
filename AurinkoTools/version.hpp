@@ -1,3 +1,3 @@
 #pragma once
 
-inline constexpr const char* AURINKO_VERSION = "0.3.5";
+inline constexpr const char* AURINKO_VERSION = "1.0.1";

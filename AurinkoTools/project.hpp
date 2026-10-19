@@ -16,6 +16,14 @@ struct CharacterConfig {
     int frames;
     float frameSpeed;
     int scene;
+
+    // Convention: scale < 0 -> disabled, skip in index.cpp
+    bool IsDisabled() const { return scale < 0.0f; }
+
+    // Convention: texture "-" or empty -> logic-only character
+    bool HasTexture() const {
+        return !texture.empty() && texture != "-";
+    }
 };
 
 // ---------- project.txt ----------
@@ -41,6 +49,26 @@ inline void WriteGlobalsIfMissing() {
     out << "}\n";
 }
 
+// ---------- styles/ ----------
+inline void EnsureStylesDir() {
+    if (fs::exists("styles")) return;
+    fs::create_directories("styles");
+}
+
+// Write an empty .style file. Returns false if it already exists.
+inline bool WriteStyleFile(const std::string& name) {
+    fs::path target = fs::path("styles") / (name + ".style");
+    if (fs::exists(target)) return false;
+
+    std::ofstream out(target, std::ios::binary | std::ios::trunc);
+    if (!out.is_open()) return false;
+    out << "# Stylesheet: " << name << "\n";
+    out << "# Edit this file, then call Globals::styles.Load(\"styles/"
+        << name << ".style\");\n";
+    out << "\n";
+    return true;
+}
+
 // ---------- fonts/ ----------
 inline void EnsureFontDir() {
     if (fs::exists("fonts")) return;
@@ -59,16 +87,16 @@ inline void EnsureFontDir() {
 inline void EnsureBuildFile() {
     if (fs::exists("build.txt")) return;
     std::ofstream out("build.txt");
-    out << "# 额外的编译参数，每行一条\n";
-    out << "# aurinko update 时会自动读取并拼接\n";
+    out << "# Extra compile flags, one per line\n";
+    out << "# aurinko update reads and appends them automatically\n";
     out << "#\n";
-    out << "# 例如:\n";
+    out << "# Examples:\n";
     out << "#   -lcurl\n";
     out << "#   -lpthread\n";
     out << "#   -I./thirdparty\n";
     out << "#   -DDEBUG_MODE\n";
     out << "#\n";
-    out << "# 以 # 开头的行会被忽略\n";
+    out << "# Lines starting with # are ignored\n";
 }
 
 inline std::vector<std::string> ReadBuildFlags() {
@@ -89,20 +117,21 @@ inline std::vector<std::string> ReadBuildFlags() {
     return flags;
 }
 
-// ---------- 项目初始化 ----------
+// ---------- Project init ----------
 inline void EnsureProject() {
     if (!fs::exists("project.txt")) {
-        std::cout << "未找到 project.txt，自动创建默认项目 (800x450)\n\n";
+        std::cout << "project.txt not found, creating default project (800x450)\n\n";
         WriteProject(800, 450);
         fs::create_directories("characters");
     }
     WriteGlobalsIfMissing();
     EnsureFontDir();
+    EnsureStylesDir();
     EnsureBuildFile();
 }
 
-// ---------- 角色列表 ----------
-inline std::vector<CharacterConfig> ReadAllCharacters() {
+// ---------- Character list ----------
+inline std::vector<CharacterConfig> ReadAllCharacters(bool skipDisabled = true) {
     std::vector<CharacterConfig> result;
     if (!fs::exists("characters")) return result;
 
@@ -114,7 +143,9 @@ inline std::vector<CharacterConfig> ReadAllCharacters() {
 
         std::ifstream in(configPath);
         CharacterConfig cfg;
-        if (in >> cfg.name >> cfg.texture >> cfg.scale >> cfg.frames >> cfg.frameSpeed >> cfg.scene) {
+        if (in >> cfg.name >> cfg.texture >> cfg.scale
+               >> cfg.frames >> cfg.frameSpeed >> cfg.scene) {
+            if (skipDisabled && cfg.IsDisabled()) continue;
             result.push_back(cfg);
         }
     }

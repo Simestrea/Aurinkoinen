@@ -10,8 +10,9 @@ namespace fs = std::filesystem;
 
 struct DetectedFunction {
     std::string name;
-    std::vector<std::string> paramTypes;   // 规范化后的参数类型（按原顺序）
+    std::vector<std::string> paramTypes;   // normalized parameter types (original order)
     bool isClone;
+    bool isAction;
 };
 
 struct CharFunctions {
@@ -20,7 +21,7 @@ struct CharFunctions {
 };
 
 // ==========================================
-// 小工具
+// Helpers
 // ==========================================
 
 inline bool EndsWith(const std::string& s, const std::string& suffix) {
@@ -28,12 +29,12 @@ inline bool EndsWith(const std::string& s, const std::string& suffix) {
     return s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-// 把 "const aur::Context & ctx" 规范化成 "aur::Context"
-// 步骤：去 const/volatile → 去 & 和 * → 折叠空格 → 剥掉尾部变量名
+// Normalize "const aur::Context & ctx" to "aur::Context".
+// Steps: strip const/volatile -> strip & and * -> collapse spaces -> drop trailing var name.
 inline std::string NormalizeType(const std::string& raw) {
     std::string s = Trim(raw);
 
-    // 1) 去掉 const / volatile（按词边界匹配）
+    // 1) remove const / volatile (word boundary)
     auto stripWord = [](std::string& str, const std::string& word) {
         size_t pos;
         while ((pos = str.find(word)) != std::string::npos) {
@@ -49,7 +50,7 @@ inline std::string NormalizeType(const std::string& raw) {
     stripWord(s, "const");
     stripWord(s, "volatile");
 
-    // 2) 去掉 & 和 *
+    // 2) remove & and *
     std::string noRefs;
     noRefs.reserve(s.size());
     for (char c : s) {
@@ -57,7 +58,7 @@ inline std::string NormalizeType(const std::string& raw) {
         noRefs += c;
     }
 
-    // 3) 折叠多余空格
+    // 3) collapse multiple spaces
     std::string collapsed;
     collapsed.reserve(noRefs.size());
     bool lastWasSpace = false;
@@ -72,7 +73,7 @@ inline std::string NormalizeType(const std::string& raw) {
     }
     collapsed = Trim(collapsed);
 
-    // 4) 剥掉尾部变量名：最后一个空格后如果全是标识符，那它是变量名
+    // 4) drop trailing variable name if it's an identifier
     auto lastSpace = collapsed.find_last_of(' ');
     if (lastSpace != std::string::npos) {
         std::string tail = collapsed.substr(lastSpace + 1);
@@ -89,7 +90,7 @@ inline std::string NormalizeType(const std::string& raw) {
     return collapsed;
 }
 
-// 按逗号分割参数列表（跟踪 < > ( ) 深度，避免拆模板参数）
+// Split a parameter list on commas (tracks < > ( ) depth to avoid splitting templates)
 inline std::vector<std::string> SplitParams(const std::string& args) {
     std::vector<std::string> out;
     std::string cur;
@@ -110,9 +111,9 @@ inline std::vector<std::string> SplitParams(const std::string& args) {
 }
 
 // ==========================================
-// 函数扫描
+// Function scan
 // ==========================================
-// 支持 "inline Task" / "inline Clone" / "inline aur::Task" / "inline aur::Clone"
+// Supports "inline Task" / "inline Clone" / "inline aur::Task" / "inline aur::Clone" / "inline aur::Action"
 inline std::vector<DetectedFunction> DetectFunctions(const fs::path& hppPath) {
     std::vector<DetectedFunction> funcs;
     std::ifstream in(hppPath);
@@ -128,11 +129,14 @@ inline std::vector<DetectedFunction> DetectFunctions(const fs::path& hppPath) {
 
         if (line.compare(p, 5, "aur::") == 0) p += 5;
 
-        bool isClone = false;
+        bool isClone  = false;
+        bool isAction = false;
         if (line.compare(p, 5, "Task ") == 0) {
             isClone = false; p += 5;
         } else if (line.compare(p, 6, "Clone ") == 0) {
             isClone = true;  p += 6;
+        } else if (line.compare(p, 7, "Action ") == 0) {
+            isAction = true; p += 7;
         } else {
             continue;
         }
@@ -157,13 +161,13 @@ inline std::vector<DetectedFunction> DetectFunctions(const fs::path& hppPath) {
             }
         }
 
-        funcs.push_back({ name, std::move(paramTypes), isClone });
+        funcs.push_back({ name, std::move(paramTypes), isClone, isAction });
     }
     return funcs;
 }
 
 // ==========================================
-// 违规扫描
+// Forbidden symbol scan
 // ==========================================
 struct ScanViolation {
     std::string file;
@@ -171,7 +175,7 @@ struct ScanViolation {
     std::string text;
 };
 
-// 扫描单个 hpp，找出引用了禁止符号的行（注释里的不算）
+// Scan one hpp for lines referencing forbidden symbols (comments ignored)
 inline std::vector<ScanViolation> CheckForbidden(
     const fs::path& hppPath,
     const std::vector<std::string>& forbidden)
@@ -185,18 +189,17 @@ inline std::vector<ScanViolation> CheckForbidden(
     while (std::getline(in, line)) {
         lineNo++;
 
-        // 跳过空行
         auto firstNonSpace = line.find_first_not_of(" \t");
         if (firstNonSpace == std::string::npos) continue;
 
-        // 跳过整行注释
+        // Skip full-line comments
         if (line[firstNonSpace] == '/' &&
             firstNonSpace + 1 < line.size() &&
             line[firstNonSpace + 1] == '/') {
             continue;
         }
 
-        // 去掉行尾注释后再判断
+        // Strip trailing comments before checking
         std::string code = line;
         auto commentPos = code.find("//");
         if (commentPos != std::string::npos) {

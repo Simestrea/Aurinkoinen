@@ -1,5 +1,6 @@
 #pragma once
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include "utils.hpp"
@@ -15,6 +16,25 @@ inline bool ShouldSkipAsset(const fs::path& p) {
     return false;
 }
 
+// Read characters/<name>/config.txt to check whether it is disabled (scale < 0).
+// If unreadable, treat as enabled.
+inline bool IsCharacterDisabled(const std::string& charName) {
+    fs::path cfg = fs::path("characters") / charName / "config.txt";
+    if (!fs::exists(cfg)) return false;
+
+    std::ifstream in(cfg);
+    if (!in.is_open()) return false;
+
+    std::string n, tex;
+    float sc;
+    int fr, sn;
+    float fs_;
+    if (in >> n >> tex >> sc >> fr >> fs_ >> sn) {
+        return sc < 0.0f;
+    }
+    return false;
+}
+
 inline void CopyDirectoryToRelease(const std::string& srcDir) {
     std::error_code ec;
     if (!fs::exists(srcDir)) return;
@@ -26,6 +46,12 @@ inline void CopyDirectoryToRelease(const std::string& srcDir) {
         auto relPath = fs::relative(entry.path(), srcDir, ec);
         if (ec) { ec.clear(); continue; }
 
+        // If under characters/, skip assets of disabled characters
+        if (srcDir == "characters" && !relPath.empty()) {
+            std::string charName = relPath.begin()->string();
+            if (IsCharacterDisabled(charName)) continue;
+        }
+
         auto targetPath = fs::path("release") / srcDir / relPath;
 
         fs::create_directories(targetPath.parent_path(), ec);
@@ -34,8 +60,8 @@ inline void CopyDirectoryToRelease(const std::string& srcDir) {
         fs::copy_file(entry.path(), targetPath,
                       fs::copy_options::overwrite_existing, ec);
         if (ec) {
-            std::cout << "警告: 复制 " << entry.path() << " 失败 -> "
-                      << ec.message() << "\n";
+            std::cout << "Warning: failed to copy " << entry.path()
+                      << " -> " << ec.message() << "\n";
             ec.clear();
         }
     }
@@ -47,7 +73,7 @@ inline void BuildReleaseDir() {
     if (fs::exists("release")) fs::remove_all("release", ec);
     fs::create_directories("release", ec);
     if (ec) {
-        std::cout << "警告: 无法创建 release/ -> " << ec.message() << "\n";
+        std::cout << "Warning: cannot create release/ -> " << ec.message() << "\n";
         return;
     }
 
@@ -55,7 +81,7 @@ inline void BuildReleaseDir() {
         fs::copy_file("game.exe", "release/game.exe",
                       fs::copy_options::overwrite_existing, ec);
         if (ec) {
-            std::cout << "警告: 复制 game.exe 失败 -> " << ec.message() << "\n";
+            std::cout << "Warning: failed to copy game.exe -> " << ec.message() << "\n";
             ec.clear();
         }
     }

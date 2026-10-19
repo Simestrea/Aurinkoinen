@@ -6,6 +6,7 @@
 #include <vector>
 #include <algorithm>
 #include <cstdlib>
+#include <cctype>
 #include "utils.hpp"
 #include "project.hpp"
 #include "scan.hpp"
@@ -14,7 +15,7 @@
 
 namespace fs = std::filesystem;
 
-// ½ÇÉ«½Å±¾½ûÖ¹ÒıÓÃµÄÄÚ²¿·ûºÅ£¨¶¼ÔÚ aur::detail Àï£©
+// Symbols forbidden inside character scripts (all under aur::detail)
 inline const std::vector<std::string>& ForbiddenSymbols() {
     static std::vector<std::string> list = {
         "detail::context",
@@ -28,18 +29,31 @@ inline const std::vector<std::string>& ForbiddenSymbols() {
 }
 
 // ==========================================
-// ÃüÁî£º´´½¨ÏîÄ¿
+// Command: create project
+//   è¿”å›: 0 = æˆåŠŸ, 1 = å¤±è´¥
 // ==========================================
-inline void CmdCreateProject() {
+inline int CmdCreateProject() {
     if (fs::exists("project.txt")) {
-        std::cout << "ÏîÄ¿ÒÑ´æÔÚ£¨ÕÒµ½ project.txt£©\n";
-        return;
+        std::cout << "Project already exists (found project.txt)\n";
+        return 1;
     }
 
-    std::string wStr = Ask("»­²¼¿í¶È: ");
-    std::string hStr = Ask("»­²¼¸ß¶È: ");
-    int w = std::stoi(wStr);
-    int h = std::stoi(hStr);
+    std::string wStr = Ask("Canvas width: ");
+    std::string hStr = Ask("Canvas height: ");
+
+    int w = 0, h = 0;
+    try {
+        w = std::stoi(wStr);
+        h = std::stoi(hStr);
+    } catch (...) {
+        std::cout << "Error: width/height must be integers\n";
+        return 1;
+    }
+
+    if (w <= 0 || h <= 0) {
+        std::cout << "Error: width/height must be positive\n";
+        return 1;
+    }
 
     WriteProject(w, h);
     fs::create_directories("characters");
@@ -47,72 +61,96 @@ inline void CmdCreateProject() {
     EnsureFontDir();
     EnsureBuildFile();
 
-    std::cout << "\nÏîÄ¿´´½¨Íê³É\n";
-    std::cout << "  »­²¼³ß´ç: " << w << " x " << h << " (ÒÑ±£´æµ½ project.txt)\n";
-    std::cout << "  ½ÇÉ«Ä¿Â¼: characters/\n";
-    std::cout << "  ×ÖÌåÄ¿Â¼: fonts/\n";
-    std::cout << "  ±àÒëÅäÖÃ: build.txt\n";
-    std::cout << "  È«¾Ö±äÁ¿: globals.hpp\n";
+    std::cout << "\nProject created\n";
+    std::cout << "  Canvas size:   " << w << " x " << h << " (saved to project.txt)\n";
+    std::cout << "  Characters:    characters/\n";
+    std::cout << "  Fonts:         fonts/\n";
+    std::cout << "  Build flags:   build.txt\n";
+    std::cout << "  Globals:       globals.hpp\n";
+    return 0;
 }
 
 // ==========================================
-// ÃüÁî£º´´½¨½ÇÉ«
+// Command: create character
+//   è¿”å›: 0 = æˆåŠŸ, 1 = å¤±è´¥
 // ==========================================
-inline void CmdCreateCharacter(const std::string& name) {
+inline int CmdCreateCharacter(const std::string& name) {
     EnsureProject();
 
     fs::path charDir = fs::path("characters") / name;
     if (fs::exists(charDir)) {
-        std::cout << "´íÎó: ½ÇÉ« " << name << " ÒÑ¾­´æÔÚ\n";
-        return;
+        std::cout << "Error: character \"" << name << "\" already exists\n";
+        return 1;
+    }
+
+    if (name.empty()) {
+        std::cout << "Error: character name cannot be empty\n";
+        return 1;
     }
 
     fs::create_directories(charDir);
 
-    std::cout << "ÇëÊäÈë¾«ÁéÍ¼Â·¾¶£¨Ö§³ÖÍÏ×§ÎÄ¼şµ½ÖÕ¶Ë£¬»òÖ±½ÓÊäÈëÍêÕûÂ·¾¶£©\n";
-    std::string inputPath = StripQuotes(Ask("Í¼Æ¬Â·¾¶: "));
+    std::cout << "Enter sprite sheet path\n";
+    std::cout << "  empty = logic-only character (coroutine / UI controller)\n";
+    std::cout << "  drag-and-drop a file onto the terminal is supported\n";
+    std::string inputPath = StripQuotes(Ask("Image path: "));
 
-    fs::path sourceImage;
-    if (inputPath.empty()) {
-        std::cout << "Î´Ìá¹©Í¼Æ¬Â·¾¶£¬Ìø¹ıÍ¼Æ¬¸´ÖÆ\n";
-    } else {
-        sourceImage = fs::path(inputPath);
+    std::string textureName = "-";     // default: no texture
+    bool hasTexture = false;
+
+    if (!inputPath.empty()) {
+        fs::path sourceImage = fs::path(inputPath);
         if (!fs::exists(sourceImage)) {
-            std::cout << "¾¯¸æ: ÎÄ¼ş²»´æÔÚ -> " << sourceImage << "\n";
-            std::cout << "¼ÌĞø´´½¨½ÇÉ«£¬ÉÔºóÄã¿ÉÒÔÊÖ¶¯°ÑÍ¼Æ¬·Åµ½ characters/" << name << "/ ÏÂ\n";
+            std::cout << "Warning: file not found -> " << sourceImage << "\n";
+            std::cout << "Continuing; you can copy the image into characters/"
+                      << name << "/ later\n";
         }
-    }
+        textureName = name + (sourceImage.has_extension()
+                              ? sourceImage.extension().string()
+                              : ".png");
+        hasTexture = true;
 
-    std::string textureName = name + ".png";
-    if (!sourceImage.empty() && sourceImage.has_extension()) {
-        textureName = name + sourceImage.extension().string();
-    }
-
-    if (!sourceImage.empty() && fs::exists(sourceImage)) {
-        fs::path targetImage = charDir / textureName;
-        std::error_code ec;
-        bool same = fs::exists(targetImage) &&
-                    fs::equivalent(sourceImage, targetImage, ec);
-        if (same) {
-            std::cout << "Í¼Æ¬ÒÑÔÚÄ¿±êÎ»ÖÃ£¬Ìø¹ı¸´ÖÆ\n";
-        } else {
-            fs::copy_file(sourceImage, targetImage, fs::copy_options::overwrite_existing, ec);
-            if (ec) std::cout << "Í¼Æ¬¸´ÖÆÊ§°Ü: " << ec.message() << "\n";
-            else     std::cout << "Í¼Æ¬ÒÑ¸´ÖÆ -> characters/" << name << "/" << textureName << "\n";
+        if (fs::exists(sourceImage)) {
+            fs::path targetImage = charDir / textureName;
+            std::error_code ec;
+            bool same = fs::exists(targetImage) &&
+                        fs::equivalent(sourceImage, targetImage, ec);
+            if (same) {
+                std::cout << "Image already at target, skipping copy\n";
+            } else {
+                fs::copy_file(sourceImage, targetImage,
+                              fs::copy_options::overwrite_existing, ec);
+                if (ec) std::cout << "Image copy failed: " << ec.message() << "\n";
+                else     std::cout << "Image copied -> characters/"
+                                   << name << "/" << textureName << "\n";
+            }
         }
+    } else {
+        std::cout << "No image provided, creating logic-only character\n";
     }
 
-    std::string scaleStr = Ask("Ëõ·Å±¶Êı (Ä¬ÈÏ 2.0): ");
-    float scale = scaleStr.empty() ? 2.0f : std::stof(scaleStr);
+    float scale      = 1.0f;
+    int   frames     = 1;
+    float frameSpeed = 0.15f;
 
-    std::string framesStr = Ask("¾«ÁéÍ¼Ö¡Êı (Ä¬ÈÏ 10): ");
-    int frames = framesStr.empty() ? 10 : std::stoi(framesStr);
+    if (hasTexture) {
+        std::string scaleStr = Ask("Scale (default 2.0): ");
+        try { scale = scaleStr.empty() ? 2.0f : std::stof(scaleStr); }
+        catch (...) { scale = 2.0f; }
 
-    std::string speedStr = Ask("Ã¿Ö¡³ÖĞøÃëÊı (Ä¬ÈÏ 0.15): ");
-    float frameSpeed = speedStr.empty() ? 0.15f : std::stof(speedStr);
+        std::string framesStr = Ask("Sprite frame count (default 10): ");
+        try { frames = framesStr.empty() ? 10 : std::stoi(framesStr); }
+        catch (...) { frames = 10; }
 
-    std::string sceneStr = Ask("³¡¾°±àºÅ (Ä¬ÈÏ 0): ");
-    int scene = sceneStr.empty() ? 0 : std::stoi(sceneStr);
+        std::string speedStr = Ask("Seconds per frame (default 0.15): ");
+        try { frameSpeed = speedStr.empty() ? 0.15f : std::stof(speedStr); }
+        catch (...) { frameSpeed = 0.15f; }
+    }
+
+    std::string sceneStr = Ask("Scene id (default 0): ");
+    int scene = 0;
+    try { scene = sceneStr.empty() ? 0 : std::stoi(sceneStr); }
+    catch (...) { scene = 0; }
 
     {
         std::ofstream out(charDir / "config.txt");
@@ -123,75 +161,81 @@ inline void CmdCreateCharacter(const std::string& name) {
     {
         std::ofstream out(charDir / (name + ".hpp"));
         out << "#pragma once\n";
-        out << "#include <aurinko/character.hpp>\n";
-        out << "#include <aurinko/coroutine.hpp>\n";
-        out << "#include <aurinko/scene.hpp>\n";
-        out << "#include <aurinko/text.hpp>\n";
-        out << "#include <aurinko/context.hpp>\n";
+        out << "#include <aurinko/aurinko.hpp>\n";
         out << "#include \"globals.hpp\"\n";
         out << "\n";
-        out << "inline aur::Task " << name << "Fun(aur::Character& c, aur::Context& ctx) {\n";
-        out << "    // " << name << " µÄ¾ç±¾\n";
+        out << "inline aur::Task " << name
+            << "Fun([[maybe_unused]] aur::Character& c, "
+            << "[[maybe_unused]] aur::Context& ctx) {\n";
+        out << "    // Script for " << name << "\n";
         out << "    //\n";
-        out << "    // ²ÎÊıËµÃ÷£¨Ë³Ğò×ÔÓÉ¡¢¸öÊı×ÔÓÉ£¬Ö»ÈÏÀàĞÍ£©:\n";
-        out << "    //   aur::Character&  -> ×Ô¶¯´«Èëµ±Ç°½ÇÉ«ÊµÀı\n";
-        out << "    //   aur::Context&    -> ×Ô¶¯´«ÈëÉÏÏÂÎÄ°ü£¬Í¨¹ıËü·ÃÎÊÈ«¾Ö×ÊÔ´£º\n";
-        out << "    //       ctx.scene      ³¡¾°¹ÜÀíÆ÷\n";
-        out << "    //       ctx.screen     ĞéÄâÆÁÄ»£¨²é³ß´ç¡¢×ø±ê»»Ëã£©\n";
-        out << "    //       ctx.fonts      ×ÖÌå³Ø\n";
-        out << "    //       ctx.textures   ÎÆÀí³Ø\n";
-        out << "    //       ctx.scheduler  Ğ­³Ìµ÷¶ÈÆ÷£¨Ò»°ã²»ÓÃÖ±½ÓÅö£©\n";
+        out << "    // Parameters (order/free, only types matter):\n";
+        out << "    //   aur::Character&  -> injected current character\n";
+        out << "    //   aur::Context&    -> injected context bundle:\n";
+        out << "    //       ctx.scene      scene manager\n";
+        out << "    //       ctx.screen     virtual screen (size, coord conversion)\n";
+        out << "    //       ctx.fonts      font pool\n";
+        out << "    //       ctx.textures   texture pool\n";
+        out << "    //       ctx.scheduler  coroutine scheduler\n";
         out << "    //\n";
-        out << "    // Àı£º\n";
+        out << "    // Example:\n";
         out << "    //   auto* bob = ctx.scene.Find(\"Bob\");\n";
         out << "    //   ctx.scene.Switch(1);\n";
         out << "    //   int vw = ctx.screen.GetVirtualWidth();\n";
         out << "    //\n";
-        out << "    // ×¢Òâ£º½ûÖ¹Ö±½Ó·ÃÎÊ aur::detail:: ÀïµÄÄÚ²¿µ¥Àı\n";
+        out << "    // Note: do NOT access aur::detail::* directly\n";
         out << "    //\n";
-        out << "    // Ê¾Àı:\n";
         out << "    //   c.Say(\"Hello!\", 1.0f);\n";
         out << "    //   co_await aur::WaitFor{ 1.0f };\n";
         out << "    co_return;\n";
         out << "}\n";
     }
 
-    std::cout << "\n½ÇÉ« " << name << " ´´½¨Íê³É\n";
-    std::cout << "  Ä¿Â¼:   characters/" << name << "/\n";
-    std::cout << "  Í·ÎÄ¼ş: characters/" << name << "/" << name << ".hpp\n";
-    std::cout << "  Í¼Æ¬:   characters/" << name << "/" << textureName << "\n";
-    std::cout << "  ÅäÖÃ:   characters/" << name << "/config.txt\n";
-    std::cout << "  ³¡¾°:   " << scene << "\n";
+    std::cout << "\nCharacter \"" << name << "\" created\n";
+    std::cout << "  Directory: characters/" << name << "/\n";
+    std::cout << "  Header:    characters/" << name << "/" << name << ".hpp\n";
+    if (hasTexture) {
+        std::cout << "  Image:     characters/" << name << "/" << textureName << "\n";
+    } else {
+        std::cout << "  Image:     (none, logic-only)\n";
+    }
+    std::cout << "  Config:    characters/" << name << "/config.txt\n";
+    std::cout << "  Scene:     " << scene << "\n";
+    std::cout << "\n";
+    std::cout << "  Tip: set the scale field in characters/" << name << "/config.txt\n";
+    std::cout << "       to -1 to disable this character; it will be skipped on update.\n";
+    return 0;
 }
 
 // ==========================================
-// ÃüÁî£ºµ¼Èë×ÖÌå
+// Command: import font
+//   è¿”å›: 0 = æˆåŠŸ, 1 = å¤±è´¥/å–æ¶ˆ
 // ==========================================
-inline void CmdAddFont(const std::string& inputPath, const std::string& newName) {
+inline int CmdAddFont(const std::string& inputPath, const std::string& newName) {
     EnsureProject();
 
     fs::path source = fs::path(StripQuotes(inputPath));
     if (!fs::exists(source)) {
-        std::cout << "´íÎó: ÎÄ¼ş²»´æÔÚ -> " << source << "\n";
-        return;
+        std::cout << "Error: file not found -> " << source << "\n";
+        return 1;
     }
     if (!fs::is_regular_file(source)) {
-        std::cout << "´íÎó: ²»ÊÇÆÕÍ¨ÎÄ¼ş -> " << source << "\n";
-        return;
+        std::cout << "Error: not a regular file -> " << source << "\n";
+        return 1;
     }
 
     auto ext = source.extension().string();
     std::string extLower = ToLower(ext);
 
     if (extLower != ".ttf" && extLower != ".ttc" && extLower != ".otf") {
-        std::cout << "¾¯¸æ: " << ext << " ²»ÊÇ³£¼û×ÖÌå¸ñÊ½£¨.ttf / .ttc / .otf£©\n";
-        std::cout << "ÊÇ·ñ¼ÌĞø£¿(y/N): ";
+        std::cout << "Warning: " << ext << " is not a common font format (.ttf / .ttc / .otf)\n";
+        std::cout << "Continue? (y/N): ";
         std::string ans;
         std::getline(std::cin, ans);
         ans = Trim(ans);
         if (ans != "y" && ans != "Y") {
-            std::cout << "ÒÑÈ¡Ïû\n";
-            return;
+            std::cout << "Cancelled\n";
+            return 1;
         }
     }
 
@@ -208,19 +252,19 @@ inline void CmdAddFont(const std::string& inputPath, const std::string& newName)
     std::error_code ec;
     bool same = fs::exists(target) && fs::equivalent(source, target, ec);
     if (same) {
-        std::cout << "×ÖÌåÒÑÔÚÄ¿±êÎ»ÖÃ£¬Ìø¹ı¸´ÖÆ\n";
-        return;
+        std::cout << "Font already at target, skipping copy\n";
+        return 0;
     }
 
     bool overwrite = false;
     if (fs::exists(target) && !same) {
-        std::cout << "fonts/" << targetName << " ÒÑ´æÔÚ£¬ÊÇ·ñ¸²¸Ç£¿(y/N): ";
+        std::cout << "fonts/" << targetName << " already exists. Overwrite? (y/N): ";
         std::string ans;
         std::getline(std::cin, ans);
         ans = Trim(ans);
         if (ans != "y" && ans != "Y") {
-            std::cout << "ÒÑÈ¡Ïû\n";
-            return;
+            std::cout << "Cancelled\n";
+            return 1;
         }
         overwrite = true;
     }
@@ -230,34 +274,231 @@ inline void CmdAddFont(const std::string& inputPath, const std::string& newName)
 
     fs::copy_file(source, target, opts, ec);
     if (ec) {
-        std::cout << "×ÖÌå¸´ÖÆÊ§°Ü: " << ec.message() << "\n";
-        return;
+        std::cout << "Font copy failed: " << ec.message() << "\n";
+        return 1;
     }
 
-    std::cout << "\n×ÖÌåÒÑµ¼Èë\n";
-    std::cout << "  ÎÄ¼ş: fonts/" << targetName << "\n";
-    std::cout << "  Ê¹ÓÃ:\n";
+    std::cout << "\nFont imported\n";
+    std::cout << "  File: fonts/" << targetName << "\n";
+    std::cout << "  Usage:\n";
     std::cout << "    aur::Text label(\"Hello\", 10, 10, 20, DARKGRAY,\n";
     std::cout << "                    \"fonts/" << targetName << "\");\n";
     std::cout << "\n";
-    std::cout << "  ÏÂ´Î aurinko update »á×Ô¶¯´ò°ü½ø release/fonts/\n";
+    std::cout << "  Next aurinko update will pack it into release/fonts/\n";
+    return 0;
+}
+
+
+// ==========================================
+// Command: delete character
+//   è¿”å›: 0 = æˆåŠŸ, 1 = å¤±è´¥/å–æ¶ˆ
+// ==========================================
+inline int CmdDeleteCharacter(const std::string& name) {
+    EnsureProject();
+
+    if (name.empty()) {
+        std::cout << "Usage: aurinko delete <name>\n";
+        return 1;
+    }
+
+    fs::path charDir = fs::path("characters") / name;
+    if (!fs::exists(charDir)) {
+        std::cout << "Error: character \"" << name << "\" not found\n";
+        return 1;
+    }
+    if (!fs::is_directory(charDir)) {
+        std::cout << "Error: not a directory -> " << charDir << "\n";
+        return 1;
+    }
+
+    std::vector<std::string> files;
+    std::error_code ec;
+    for (auto& e : fs::recursive_directory_iterator(charDir, ec)) {
+        if (e.is_regular_file()) {
+            auto rel = fs::relative(e.path(), charDir, ec);
+            files.push_back(rel.string());
+        }
+    }
+
+    std::cout << "Delete character \"" << name << "\"?\n";
+    std::cout << "  Directory: " << charDir.string() << "\n";
+    std::cout << "  Files (" << files.size() << "):\n";
+    for (auto& f : files) std::cout << "    " << f << "\n";
+    std::cout << "Confirm? (y/N): ";
+
+    std::string ans;
+    std::getline(std::cin, ans);
+    ans = Trim(ans);
+    if (ans != "y" && ans != "Y") {
+        std::cout << "Cancelled\n";
+        return 1;
+    }
+
+    std::uintmax_t n = fs::remove_all(charDir, ec);
+    if (ec) {
+        std::cout << "Error: remove failed -> " << ec.message() << "\n";
+        return 1;
+    }
+
+    std::cout << "\nCharacter \"" << name << "\" deleted\n";
+    std::cout << "  Removed " << n << " entries\n";
+    std::cout << "  Next aurinko update regenerates index.cpp without it\n";
+    return 0;
 }
 
 // ==========================================
-// ÃüÁî£º¸üĞÂ
+// Command: list characters
+//   è¿”å›: 0 = æˆåŠŸ
 // ==========================================
-inline void CmdUpdate(bool debugMode, const std::vector<std::string>& extraFlags) {
+inline int CmdListCharacters() {
+    EnsureProject();
+
+    auto chars = ReadAllCharacters(/*skipDisabled=*/false);
+    if (chars.empty()) {
+        std::cout << "No characters found in characters/\n";
+        return 0;
+    }
+
+    std::cout << "\n";
+    std::cout << "Characters (" << chars.size() << "):\n";
+    std::cout << "  " << std::string(72, '-') << "\n";
+    std::printf("  %-20s %-20s %8s %6s %8s %6s\n",
+                "name", "texture", "scale", "frames", "speed", "scene");
+    std::cout << "  " << std::string(72, '-') << "\n";
+    for (auto& c : chars) {
+        std::printf("  %-20s %-20s %8.2f %6d %8.3f %6d%s\n",
+                    c.name.c_str(),
+                    c.texture.empty() ? "-" : c.texture.c_str(),
+                    c.scale, c.frames, c.frameSpeed, c.scene,
+                    c.IsDisabled() ? "  [disabled]" : "");
+    }
+    std::cout << "\n";
+    return 0;
+}
+
+// ==========================================
+// Command: create stylesheet (empty)
+//   è¿”å›: 0 = æˆåŠŸ, 1 = å¤±è´¥
+// ==========================================
+inline int CmdCreateStyle(const std::string& name) {
+    EnsureProject();
+    EnsureStylesDir();
+
+    if (name.empty()) {
+        std::cout << "Usage: aurinko create-style <name>\n";
+        return 1;
+    }
+
+    for (char c : name) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) &&
+            c != '_' && c != '-') {
+            std::cout << "Error: name may only contain letters, digits, _ or -\n";
+            return 1;
+        }
+    }
+
+    if (!WriteStyleFile(name)) {
+        std::cout << "Error: styles/" << name
+                  << ".style already exists, or cannot write\n";
+        return 1;
+    }
+
+    std::cout << "\nStylesheet created (empty)\n";
+    std::cout << "  File: styles/" << name << ".style\n";
+    std::cout << "\n";
+    std::cout << "  Usage:\n";
+    std::cout << "    Globals::styles.Load(\"styles/" << name << ".style\");\n";
+    std::cout << "    Globals::styles.Apply(btn, \"button primary\");\n";
+    return 0;
+}
+
+
+// ============================================================
+// æ‰¾ g++ å¯æ‰§è¡Œæ–‡ä»¶
+//   ä¼˜å…ˆçº§ï¼š
+//     1) æœ¬ exe æ‰€åœ¨ç›®å½•çš„ g++.exe / g++ / gcc.exe / gcc
+//     2) ç›´æ¥è¿”å› "g++.exe"ï¼ˆé  PATHï¼‰
+// ============================================================
+#ifdef _WIN32
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#endif
+
+inline std::string FindGppExecutable() {
+#ifdef _WIN32
+    char buf[MAX_PATH];
+    DWORD n = GetModuleFileNameA(NULL, buf, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) {
+        std::filesystem::path selfPath(std::string(buf, n));
+        std::filesystem::path dir = selfPath.parent_path();
+        for (auto name : { "g++.exe", "g++", "gcc.exe", "gcc" }) {
+            std::filesystem::path candidate = dir / name;
+            std::error_code ec;
+            if (std::filesystem::exists(candidate, ec)
+                && std::filesystem::is_regular_file(candidate, ec)) {
+                return "\"" + candidate.string() + "\"";
+            }
+        }
+    }
+#endif
+    return "g++.exe";
+}
+
+// ==========================================
+// Command: update
+//   è¿”å›: 0 = ç¼–è¯‘æˆåŠŸ, 1 = å¤±è´¥
+// ==========================================
+inline int CmdUpdate(bool debugMode, const std::vector<std::string>& extraFlags) {
     EnsureProject();
 
     int width = 0, height = 0;
     ReadProject(width, height);
 
-    auto chars = ReadAllCharacters();
-    if (chars.empty()) {
-        std::cout << "ÌáÊ¾: µ±Ç°Ã»ÓĞ½ÇÉ«£¬ÇëÏÈÖ´ĞĞ aurinko create <½ÇÉ«Ãû>\n";
+    auto allChars = ReadAllCharacters(/*skipDisabled=*/false);
+    auto chars    = ReadAllCharacters(/*skipDisabled=*/true);
+
+    // ---------- Report disabled characters ----------
+    {
+        std::vector<std::string> disabled;
+        for (auto& c : allChars) {
+            if (c.IsDisabled()) disabled.push_back(c.name);
+        }
+        if (!disabled.empty()) {
+            std::cout << "Disabled (scale < 0, skipped in index.cpp): ";
+            for (size_t i = 0; i < disabled.size(); ++i) {
+                if (i > 0) std::cout << ", ";
+                std::cout << disabled[i];
+            }
+            std::cout << "\n";
+        }
     }
 
-    // ---------- É¨Ãè½ÇÉ« hpp£¬¾Ü¾øÄÚ²¿µ¥Àı ----------
+    // ---------- Report no-texture characters ----------
+    {
+        std::vector<std::string> noTex;
+        for (auto& c : chars) {
+            if (!c.HasTexture()) noTex.push_back(c.name);
+        }
+        if (!noTex.empty()) {
+            std::cout << "No-texture (texture = \"-\"): ";
+            for (size_t i = 0; i < noTex.size(); ++i) {
+                if (i > 0) std::cout << ", ";
+                std::cout << noTex[i];
+            }
+            std::cout << "\n";
+        }
+    }
+
+    if (chars.empty()) {
+        std::cout << "Note: no active characters, run aurinko create <name> first\n";
+    }
+
+    // ---------- Scan character hpp, reject internal singletons ----------
     {
         const auto& forbidden = ForbiddenSymbols();
         bool hasViolation = false;
@@ -267,17 +508,22 @@ inline void CmdUpdate(bool debugMode, const std::vector<std::string>& extraFlags
             auto violations = CheckForbidden(hppPath, forbidden);
 
             for (auto& v : violations) {
-                std::cout << "´íÎó: " << v.file << ":" << v.line
-                          << " Ê¹ÓÃÁË±»½ûÖ¹µÄÄÚ²¿·ûºÅ\n";
-                std::cout << "  ´úÂë: " << v.text << "\n";
+                std::cout << "Error: " << v.file << ":" << v.line
+                          << " uses a forbidden internal symbol\n";
+                std::cout << "  Code: " << v.text << "\n";
                 hasViolation = true;
             }
         }
 
         if (hasViolation) {
-            std::cout << "\n½ÇÉ«½Å±¾½ûÖ¹Ö±½Ó·ÃÎÊÄÚ²¿µ¥Àı¡£\n";
-            std::cout << "ÇëÔÚº¯ÊıÇ©ÃûÀï¼Ó aur::SceneManager& scene ²ÎÊı£¬ÓÃ scene ·ÃÎÊ³¡¾°¡£\n";
-            return;
+            std::cout << "\nCharacter scripts must not access internal singletons.\n";
+            std::cout << "Add an aur::Context& ctx parameter and use it instead:\n";
+            std::cout << "  ctx.scene      scene manager\n";
+            std::cout << "  ctx.screen     virtual screen\n";
+            std::cout << "  ctx.fonts      font pool\n";
+            std::cout << "  ctx.textures   texture pool\n";
+            std::cout << "  ctx.scheduler  coroutine scheduler\n";
+            return 1;
         }
     }
 
@@ -297,15 +543,17 @@ inline void CmdUpdate(bool debugMode, const std::vector<std::string>& extraFlags
     std::sort(sceneList.begin(), sceneList.end());
 
     if (!GenerateIndexCpp(width, height, chars, charFuncs, sceneList)) {
-        std::cout << "´íÎó: Éú³É index.cpp Ê§°Ü\n";
-        return;
+        std::cout << "Error: failed to generate index.cpp\n";
+        return 1;
     }
 
-    std::cout << "ÒÑÉú³É index.cpp (" << chars.size() << " ¸ö½ÇÉ«, "
-              << sceneList.size() << " ¸ö³¡¾°)\n";
-    std::cout << "ÕıÔÚ±àÒë...\n";
+    std::cout << "Generated index.cpp (" << chars.size() << " characters, "
+              << sceneList.size() << " scenes)\n";
+    std::cout << "Compiling...\n";
 
-    std::string cmd = "g++ index.cpp -o game -I. "
+    // ä»æœ¬ exe åŒç›®å½•æ‰¾ g++ï¼Œæ— éœ€ PATH
+    const std::string gpp = FindGppExecutable();
+    std::string cmd = gpp + " index.cpp -o game -I. "
                       "-mwindows "
                       "-lraylib -lwinmm -lgdi32 -luser32 "
                       "-std=c++20";
@@ -318,16 +566,19 @@ inline void CmdUpdate(bool debugMode, const std::vector<std::string>& extraFlags
     std::cout << "  " << cmd << "\n";
 
     const int result = std::system(cmd.c_str());
+
     if (result == 0) {
-        std::cout << "±àÒë³É¹¦ -> game.exe\n";
+        std::cout << "Build succeeded -> game.exe\n";
         if (!debugMode) {
-            std::cout << "ÕıÔÚÉú³É release/ ...\n";
+            std::cout << "Building release/ ...\n";
             BuildReleaseDir();
-            std::cout << "release/ ÒÑÉú³É\n";
+            std::cout << "release/ done\n";
         } else {
-            std::cout << "(debug Ä£Ê½£¬Ìø¹ı release/)\n";
+            std::cout << "(debug mode, skipping release/)\n";
         }
+        return 0;
     } else {
-        std::cout << "±àÒëÊ§°Ü (ÍË³öÂë " << result << ")\n";
+        std::cout << "Build failed (exit code " << result << ")\n";
+        return 1;
     }
 }
