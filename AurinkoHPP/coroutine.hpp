@@ -3,6 +3,8 @@
 #include <vector>
 #include <memory>
 #include <algorithm>
+#include <functional>
+#include <initializer_list>
 #include <cstdlib>
 
 
@@ -27,6 +29,7 @@ struct WaitNextFrame {
 namespace detail {
     struct TaskTag {};
     struct CloneTag {};
+    struct ActionTag {};
 
     template<typename Tag>
     class TaskBase {
@@ -92,6 +95,7 @@ namespace detail {
 
 using Task = detail::TaskBase<detail::TaskTag>;
 using Clone = detail::TaskBase<detail::CloneTag>;
+using Action = detail::TaskBase<detail::ActionTag>;
 
 class CoroutineScheduler {
 private:
@@ -106,8 +110,14 @@ private:
         int groupId;
     };
 
+    struct TickEntry {
+        std::function<bool(float)> fn;   // 返回 true = 完成，会被移除
+        std::coroutine_handle<>    waiter; // 完成后要 resume 的协程（可空）
+    };
+
     std::vector<PendingEntry> pending_;
     std::vector<RunningEntry> running_;
+    std::vector<TickEntry>    ticks_;
     int activeGroup_{0};
 
 public:
@@ -142,7 +152,30 @@ public:
         pending_.push_back({ h, seconds, group });
     }
 
+    // 每帧 tick 回调。fn 返回 true 表示完成（自动移除）
+    // 如果 waiter 非空，会在完成时 resume
+    void AddTick(std::function<bool(float)> fn,
+                 std::coroutine_handle<> waiter = {}) {
+        ticks_.push_back({ std::move(fn), waiter });
+    }
+
     void Update(float deltaTime) {
+        // ---------- 每帧动画 tick ----------
+        if (!ticks_.empty()) {
+            std::vector<std::coroutine_handle<>> tickDone;
+            for (auto it = ticks_.begin(); it != ticks_.end(); ) {
+                bool done = it->fn(deltaTime);
+                if (done) {
+                    if (it->waiter) tickDone.push_back(it->waiter);
+                    it = ticks_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            for (auto h : tickDone) h.resume();
+        }
+
+        // ---------- 等待队列 ----------
         std::vector<std::coroutine_handle<>> toResume;
         toResume.reserve(pending_.size());
 
@@ -177,6 +210,7 @@ public:
 
     void Clear() noexcept {
         pending_.clear();
+        ticks_.clear();
         for (auto& e : running_) {
             if (e.handle) e.handle.destroy();
         }
@@ -202,5 +236,111 @@ inline void WaitFor::await_suspend(std::coroutine_handle<> h) const noexcept {
 inline void WaitNextFrame::await_suspend(std::coroutine_handle<> h) const noexcept {
     detail::scheduler.Register(h, 0.0f);
 }
+
+// ==========================================
+// Fire: fire-and-forget
+//
+// 把一个 Action / Task 挂到当前场景的调度器上，立刻返回。
+// 调用者不会等它跑完。
+//
+// 用法:
+//   aur::Fire(BobDance(*bob));
+// ==========================================
+template<typename TaskType>
+inline void Fire(TaskType task) {
+    detail::scheduler.Start(std::move(task),
+                            detail::scheduler.GetActiveGroup());
+}
+
+// ==========================================
+// 动画 awaitable
+// ==========================================
+
+// 一段时长内，每帧回调 onFrame(t)
+// t ∈ [0, 1]，已过缓动
+//
+// 用法：
+//   co_await aur::Tween{ 0.5f, [&](float t){ c.SetColorEffect(255*t); } };
+//   co_await aur::Tween{ 0.8f, ..., aur::ease::OutQuad };
+struct Tween {
+    float duration = 0.0f;
+    std::function<void(float)> onFrame;
+    float (*ease)(float) = nullptr;   // 空 = 线性
+
+    bool await_ready() const noexcept { return duration <= 0.0f; }
+
+    void await_suspend(std::coroutine_handle<> h) const {
+        if (!onFrame) { h.resume(); return; }
+
+        auto cb          = onFrame;
+        float dur        = duration;
+        float (*ease_)(float) = ease;
+
+        detail::scheduler.AddTick(
+            [cb, dur, ease_, elapsed = 0.0f](float dt) mutable -> bool {
+                elapsed += dt;
+                float t = (dur > 0.0f)
+                          ? (elapsed >= dur ? 1.0f : elapsed / dur)
+                          : 1.0f;
+                float e = ease_ ? ease_(t) : t;
+                cb(e);
+                return t >= 1.0f;
+            },
+            h);
+    }
+
+    void await_resume() const noexcept {}
+};
+
+// 并行等待多个 Tween，全部完成才恢复
+//
+// 用法：
+//   co_await aur::Parallel({
+//       aur::Tween{ 0.3f, [&](float t){ c.SetColorEffect(255*t); } },
+//       aur::Tween{ 0.3f, [&](float t){ c.SetScale(0.5f + t * 0.5f); } },
+//   });
+struct Parallel {
+    std::vector<Tween> tweens;
+
+    Parallel(std::initializer_list<Tween> list) : tweens(list) {}
+
+    bool await_ready() const noexcept { return tweens.empty(); }
+
+    void await_suspend(std::coroutine_handle<> h) const {
+        int total = 0;
+        for (auto& tw : tweens) if (tw.onFrame) ++total;
+        if (total == 0) { h.resume(); return; }
+
+        auto counter = std::make_shared<int>(total);
+        auto hc = h;
+
+        for (auto& tw : tweens) {
+            if (!tw.onFrame) continue;
+
+            auto cb          = tw.onFrame;
+            float dur        = tw.duration;
+            float (*ease_)(float) = tw.ease;
+
+            detail::scheduler.AddTick(
+                [cb, dur, ease_, counter, hc, elapsed = 0.0f]
+                (float dt) mutable -> bool {
+                    elapsed += dt;
+                    float t = (dur > 0.0f)
+                              ? (elapsed >= dur ? 1.0f : elapsed / dur)
+                              : 1.0f;
+                    float e = ease_ ? ease_(t) : t;
+                    cb(e);
+                    if (t >= 1.0f) {
+                        if (--(*counter) == 0) hc.resume();
+                        return true;
+                    }
+                    return false;
+                },
+                {});
+        }
+    }
+
+    void await_resume() const noexcept {}
+};
 
 }

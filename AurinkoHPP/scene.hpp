@@ -3,7 +3,7 @@
 #include <memory>
 #include <algorithm>
 #include <cstddef>
-#include "character.hpp"
+#include <aurinko/components/character/character.hpp>
 #include "coroutine.hpp"
 
 namespace aur {

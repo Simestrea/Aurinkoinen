@@ -2,8 +2,8 @@
 #include "scene.hpp"
 #include "coroutine.hpp"
 #include "init.hpp"
-#include "character.hpp"
-#include "text.hpp"
+#include <aurinko/components/character/character.hpp>
+#include <aurinko/components/text.hpp>
 
 namespace aur {
 

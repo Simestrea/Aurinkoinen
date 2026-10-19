@@ -1,10 +1,11 @@
 #pragma once
 #include "raylib.h"
-#include "init.hpp"
-#include "text.hpp"
-#include "ui_root.hpp"
+#include <aurinko/init.hpp>
+#include <aurinko/components/text.hpp>
+#include <aurinko/components/ui_root.hpp>
 #include <string>
 #include <functional>
+#include <algorithm>
 
 namespace aur {
 
@@ -27,10 +28,20 @@ private:
     Color textColor_{WHITE};
     float borderWidth_{2.0f};
 
+    float cornerRadius_{0.0f};
+    int   cornerSegments_{8};
+
     bool visible_{true};
     bool enabled_{true};
 
     std::function<void()> onClick_;
+
+    float Roundness() const {
+        float shorter = std::min(w_, h_);
+        if (shorter <= 0.0f) return 0.0f;
+        float r = std::min(cornerRadius_, shorter * 0.5f);
+        return r / shorter;
+    }
 
 public:
     Button() = default;
@@ -42,18 +53,21 @@ public:
         : x_{x}, y_{y}, w_{w}, h_{h},
           label_{label}, fontSize_{fontSize}, fontName_{font} {}
 
-    // ---------- Widget 接口 ----------
     Rectangle GetBounds() const override {
         return { x_, y_, w_, h_ };
     }
 
-    // ---------- 设置 ----------
     void SetLabel(const std::string& s) { label_ = s; }
     void SetPosition(float x, float y) { x_ = x; y_ = y; }
     void SetSize(float w, float h) { w_ = w; h_ = h; }
     void SetFontSize(int s) { fontSize_ = s; }
     void SetFont(const std::string& f) { fontName_ = f; }
     void SetBorderWidth(float w) { borderWidth_ = w; }
+
+    void SetCornerRadius(float r, int segments = 8) {
+        cornerRadius_ = r;
+        cornerSegments_ = segments;
+    }
 
     void SetColors(Color normal, Color hover, Color pressed,
                    Color border, Color text) {
@@ -79,13 +93,11 @@ public:
     void SetEnabled(bool e) { enabled_ = e; }
     bool IsEnabled() const noexcept { return enabled_; }
 
-    // ---------- Widget 回调 ----------
     void OnClick() override {
         if (!visible_ || !enabled_) return;
         if (onClick_) onClick_();
     }
 
-    // ---------- 绘制 ----------
     void Draw() override {
         if (!visible_) return;
 
@@ -98,9 +110,19 @@ public:
         else if (hover)    bg = bgHover_;
 
         const Rectangle r{ x_, y_, w_, h_ };
-        DrawRectangleRec(r, bg);
-        if (borderWidth_ > 0.0f) {
-            DrawRectangleLinesEx(r, borderWidth_, borderColor_);
+        const float round = Roundness();
+
+        if (round > 0.0f) {
+            DrawRectangleRounded(r, round, cornerSegments_, bg);
+            if (borderWidth_ > 0.0f) {
+                DrawRectangleRoundedLinesEx(r, round, cornerSegments_,
+                                            borderWidth_, borderColor_);
+            }
+        } else {
+            DrawRectangleRec(r, bg);
+            if (borderWidth_ > 0.0f) {
+                DrawRectangleLinesEx(r, borderWidth_, borderColor_);
+            }
         }
 
         if (label_.empty()) return;

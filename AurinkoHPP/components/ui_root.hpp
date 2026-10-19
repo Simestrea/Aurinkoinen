@@ -1,6 +1,6 @@
 #pragma once
 #include "raylib.h"
-#include "init.hpp"
+#include <aurinko/init.hpp>
 #include <vector>
 #include <algorithm>
 #include <functional>

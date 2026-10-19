@@ -1,7 +1,7 @@
 #pragma once
 #include "raylib.h"
-#include "init.hpp"
-#include "text.hpp"
+#include <aurinko/init.hpp>
+#include <aurinko/components/text.hpp>
 #include <string>
 #include <algorithm>
 #include <cstdio>

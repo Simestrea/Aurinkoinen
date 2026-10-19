@@ -1,8 +1,8 @@
 #pragma once
-#include "ui_root.hpp"
+#include <aurinko/components/ui_root.hpp>
 #include "raylib.h"
-#include "init.hpp"
-#include "text.hpp"
+#include <aurinko/init.hpp>
+#include <aurinko/components/text.hpp>
 #include <string>
 #include <cstddef>
 

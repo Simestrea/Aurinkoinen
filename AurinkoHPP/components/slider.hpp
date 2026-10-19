@@ -1,7 +1,7 @@
 #pragma once
 #include "raylib.h"
 #include <aurinko/init.hpp>
-#include <aurinko/text.hpp>
+#include <aurinko/components/text.hpp>
 #include <string>
 #include <algorithm>
 #include <cmath>
@@ -10,25 +10,6 @@ namespace aur {
 
 // ==========================================
 // Slider：拖动式数值调节器
-//
-// 特点：
-//   - 拖动滑块或在轨道上点击，直接改变值
-//   - 支持连续值 / 步进值
-//   - 带标签和当前值的显示
-//   - Changed() 每帧只"消费"一次，避免重复触发
-//
-// 用法：
-//   aur::Slider sl("光子数", 800, 130, 300, 28, 1000, 1000000, 20000);
-//   sl.SetStep(1000);        // 步进 1000
-//   sl.SetFont("fonts/xxx.ttf");
-//
-//   while (true) {
-//       sl.Draw();
-//       if (sl.Changed()) {
-//           Globals::Nphotons = (int)sl.Value();
-//       }
-//       co_await aur::WaitNextFrame{};
-//   }
 // ==========================================
 class Slider {
 private:
